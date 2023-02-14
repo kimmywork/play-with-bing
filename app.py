@@ -1,143 +1,392 @@
-# Import Flask and SQLAlchemy
-from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
+# Import Flask and Flask-RESTful
+from flask import Flask, request
+from flask_restful import Resource, Api, fields, marshal_with
+from model import *
 
 # Create a Flask app
 app = Flask(__name__)
 
-# Configure the database URI
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///todo.db'
+# Create a Flask-RESTful API object
+api = Api(app)
 
-# Create a SQLAlchemy object
-db = SQLAlchemy(app)
+# Define the output fields for tasks
+task_fields = {
+  'id': fields.Integer,
+  'title': fields.String,
+  'description': fields.String,
+  'due_date': fields.String,
+  'completed': fields.Boolean,
+  'completed_at': fields.String,
+  'user_id': fields.Integer,
+  'project_id': fields.Integer,
+  'iteration_id': fields.Integer,
+  'tag_ids': fields.List(fields.Integer)
+}
 
-# Define the models
-class User(db.Model):
-  id = db.Column(db.Integer, primary_key=True)
-  name = db.Column(db.String(50), nullable=False)
-  email = db.Column(db.String(50), unique=True, nullable=False)
-  tasks = db.relationship('Task', backref='user', lazy=True)
-  projects = db.relationship('Project', backref='user', lazy=True)
+# Define the resource for tasks
+class TaskResource(Resource):
+  # Define the method for creating a new task
+  @marshal_with(task_fields)
+  def post(self):
+    # Get the JSON data from the request
+    data = request.get_json()
 
-class Task(db.Model):
-  id = db.Column(db.Integer, primary_key=True)
-  title = db.Column(db.String(100), nullable=False)
-  description = db.Column(db.Text)
-  due_date = db.Column(db.Date)
-  completed = db.Column(db.Boolean, default=False)
-  completed_at = db.Column(db.DateTime)
-  user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-  projects = db.relationship('Project', secondary='project_task', backref='tasks', lazy=True)
-  iterations = db.relationship('Iteration', secondary='iteration_task', backref='tasks', lazy=True)
-  tags = db.relationship('Tag', secondary='task_tag', backref='tasks', lazy=True)
+    # Create a new task object
+    task = Task(
+      title=data['title'],
+      description=data['description'],
+      due_date=data['due_date'],
+      user_id=data['user_id'],
+      project_id=data['project_id'],
+      iteration_id=data['iteration_id'],
+      tag_ids=data['tag_ids']
+    )
 
-class Project(db.Model):
-  id = db.Column(db.Integer, primary_key=True)
-  name = db.Column(db.String(100), nullable=False)
-  description = db.Column(db.Text)
-  start_date = db.Column(db.Date, nullable=False)
-  end_date = db.Column(db.Date, nullable=False)
-  user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-  iterations = db.relationship('Iteration', backref='project', lazy=True)
+    # Add the task to the database
+    db.session.add(task)
+    db.session.commit()
 
-class Iteration(db.Model):
-  id = db.Column(db.Integer, primary_key=True)
-  name = db.Column(db.String(100), nullable=False)
-  description = db.Column(db.Text)
-  start_date = db.Column(db.Date, nullable=False)
-  end_date = db.Column(db.Date, nullable=False)
-  project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=False)
+    # Return the task data
+    return task, 201
 
-class Tag(db.Model):
-  id = db.Column(db.Integer, primary_key=True)
-  name = db.Column(db.String(50), nullable=False)
-  color = db.Column(db.String(10), nullable=False)
+  # Define the method for querying tasks
+  @marshal_with(task_fields)
+  def get(self):
+    # Get the query parameters from the request
+    user_id = request.args.get('user_id')
+    due_date = request.args.get('due_date')
+    completed = request.args.get('completed')
+    tag_name = request.args.get('tag_name')
 
-# Define the association tables
-project_task = db.Table('project_task',
-  db.Column('project_id', db.Integer, db.ForeignKey('project.id'), primary_key=True),
-  db.Column('task_id', db.Integer, db.ForeignKey('task.id'), primary_key=True)
-)
+    # Query the tasks based on the parameters
+    if user_id:
+      tasks = Task.query.filter_by(user_id=user_id).all()
+    elif due_date:
+      tasks = Task.query.filter_by(due_date=due_date).all()
+    elif completed:
+      tasks = Task.query.filter_by(completed=completed).all()
+    elif tag_name:
+      tasks = Task.query.join(task_tag).join(Tag).filter(Tag.name == tag_name).all()
+    else:
+      tasks = Task.query.all()
 
-iteration_task = db.Table('iteration_task',
-  db.Column('iteration_id', db.Integer, db.ForeignKey('iteration.id'), primary_key=True),
-  db.Column('task_id', db.Integer, db.ForeignKey('task.id'), primary_key=True)
-)
+    # Return the tasks data
+    return tasks, 200
 
-task_tag = db.Table('task_tag',
-  db.Column('task_id', db.Integer, db.ForeignKey('task.id'), primary_key=True),
-  db.Column('tag_id', db.Integer, db.ForeignKey('tag.id'), primary_key=True)
-)
+# Define the resource for a single task
+class SingleTaskResource(Resource):
+  # Define the method for updating a task
+  @marshal_with(task_fields)
+  def put(self, task_id):
+    # Get the JSON data from the request
+    data = request.get_json()
 
-# Create the database and tables
-db.create_all()
+    # Get the task from the database by id
+    task = Task.query.get_or_404(task_id)
 
-# Define the route for creating a new task
-@app.route('/tasks', methods=['POST'])
-def create_task():
-  # Get the JSON data from the request
-  data = request.get_json()
+    # Update the task attributes
+    task.title = data['title']
+    task.description = data['description']
+    task.due_date = data['due_date']
+    task.completed = data['completed']
+    task.completed_at = data['completed_at']
 
-  # Create a new task object
-  task = Task(
-    title=data['title'],
-    description=data['description'],
-    due_date=data['due_date'],
-    user_id=data['user_id'],
-    project_id=data['project_id'],
-    iteration_id=data['iteration_id'],
-    tag_ids=data['tag_ids']
-  )
+    # Commit the changes to the database
+    db.session.commit()
 
-  # Add the task to the database
-  db.session.add(task)
-  db.session.commit()
+    # Return the task data
+    return task, 200
 
-  # Return a JSON response with the task data
-  return jsonify(task.to_dict()), 201
+# Add the resources and routes to the API
+api.add_resource(TaskResource, '/tasks')
+api.add_resource(SingleTaskResource, '/tasks/<int:task_id>')
 
-# Define the route for querying tasks
-@app.route('/tasks', methods=['GET'])
-def query_tasks():
-  # Get the query parameters from the request
-  user_id = request.args.get('user_id')
-  due_date = request.args.get('due_date')
-  completed = request.args.get('completed')
-  tag_name = request.args.get('tag_name')
+# Define the output fields for users
+user_fields = {
+  'id': fields.Integer,
+  'name': fields.String,
+  'email': fields.String,
+  'tasks': fields.List(fields.Nested(task_fields)),
+  'projects': fields.List(fields.Nested(project_fields))
+}
 
-  # Query the tasks based on the parameters
-  if user_id:
-    tasks = Task.query.filter_by(user_id=user_id).all()
-  elif due_date:
-    tasks = Task.query.filter_by(due_date=due_date).all()
-  elif completed:
-    tasks = Task.query.filter_by(completed=completed).all()
-  elif tag_name:
-    tasks = Task.query.join(task_tag).join(Tag).filter(Tag.name == tag_name).all()
-  else:
-    tasks = Task.query.all()
+# Define the resource for users
+class UserResource(Resource):
+  # Define the method for creating a new user
+  @marshal_with(user_fields)
+  def post(self):
+    # Get the JSON data from the request
+    data = request.get_json()
 
-  # Return a JSON response with the tasks data
-  return jsonify([task.to_dict() for task in tasks]), 200
+    # Create a new user object
+    user = User(
+      name=data['name'],
+      email=data['email']
+    )
 
-# Define the route for updating a task
-@app.route('/tasks/<int:task_id>', methods=['PUT'])
-def update_task(task_id):
-  # Get the JSON data from the request
-  data = request.get_json()
+    # Add the user to the database
+    db.session.add(user)
+    db.session.commit()
 
-  # Get the task from the database by id
-  task = Task.query.get_or_404(task_id)
+    # Return the user data
+    return user, 201
 
-  # Update the task attributes
-  task.title = data['title']
-  task.description = data['description']
-  task.due_date = data['due_date']
-  task.completed = data['completed']
-  task.completed_at = data['completed_at']
+  # Define the method for querying users
+  @marshal_with(user_fields)
+  def get(self):
+    # Get the query parameter from the request
+    email = request.args.get('email')
 
-  # Commit the changes to the database
-  db.session.commit()
+    # Query the user by email
+    if email:
+      user = User.query.filter_by(email=email).first_or_404()
+    else:
+      user = User.query.all()
 
-  # Return a JSON response with the task data
-  return jsonify(task.to_dict()), 200    
+    # Return the user data
+    return user, 200
+
+# Define the resource for a single user
+class SingleUserResource(Resource):
+  # Define the method for updating a user
+  @marshal_with(user_fields)
+  def put(self, user_id):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Get the user from the database by id
+    user = User.query.get_or_404(user_id)
+
+    # Update the user attributes
+    user.name = data['name']
+    user.email = data['email']
+
+    # Commit the changes to the database
+    db.session.commit()
+
+    # Return the user data
+    return user, 200
+
+# Add the resources and routes to the API
+api.add_resource(UserResource, '/users')
+api.add_resource(SingleUserResource, '/users/<int:user_id>')
+
+# Define the output fields for projects
+project_fields = {
+  'id': fields.Integer,
+  'name': fields.String,
+  'description': fields.String,
+  'start_date': fields.String,
+  'end_date': fields.String,
+  'user_id': fields.Integer,
+  'iterations': fields.List(fields.Nested(iteration_fields)),
+  'tasks': fields.List(fields.Nested(task_fields))
+}
+
+# Define the resource for projects
+class ProjectResource(Resource):
+  # Define the method for creating a new project
+  @marshal_with(project_fields)
+  def post(self):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Create a new project object
+    project = Project(
+      name=data['name'],
+      description=data['description'],
+      start_date=data['start_date'],
+      end_date=data['end_date'],
+      user_id=data['user_id']
+    )
+
+    # Add the project to the database
+    db.session.add(project)
+    db.session.commit()
+
+    # Return the project data
+    return project, 201
+
+  # Define the method for querying projects
+  @marshal_with(project_fields)
+  def get(self):
+    # Get the query parameter from the request
+    user_id = request.args.get('user_id')
+
+    # Query the projects by user id
+    if user_id:
+      projects = Project.query.filter_by(user_id=user_id).all()
+    else:
+      projects = Project.query.all()
+
+    # Return the projects data
+    return projects, 200
+
+# Define the resource for a single project
+class SingleProjectResource(Resource):
+  # Define the method for updating a project
+  @marshal_with(project_fields)
+  def put(self, project_id):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Get the project from the database by id
+    project = Project.query.get_or_404(project_id)
+
+    # Update the project attributes
+    project.name = data['name']
+    project.description = data['description']
+    project.start_date = data['start_date']
+    project.end_date = data['end_date']
+
+    # Commit the changes to the database
+    db.session.commit()
+
+    # Return the project data
+    return project, 200
+
+# Add the resources and routes to the API
+api.add_resource(ProjectResource, '/projects')
+api.add_resource(SingleProjectResource, '/projects/<int:project_id>')
+
+# Define the output fields for iterations
+iteration_fields = {
+  'id': fields.Integer,
+  'name': fields.String,
+  'description': fields.String,
+  'start_date': fields.String,
+  'end_date': fields.String,
+  'project_id': fields.Integer,
+  'tasks': fields.List(fields.Nested(task_fields))
+}
+
+# Define the resource for iterations
+class IterationResource(Resource):
+  # Define the method for creating a new iteration
+  @marshal_with(iteration_fields)
+  def post(self):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Create a new iteration object
+    iteration = Iteration(
+      name=data['name'],
+      description=data['description'],
+      start_date=data['start_date'],
+      end_date=data['end_date'],
+      project_id=data['project_id']
+    )
+
+    # Add the iteration to the database
+    db.session.add(iteration)
+    db.session.commit()
+
+    # Return the iteration data
+    return iteration, 201
+
+  # Define the method for querying iterations
+  @marshal_with(iteration_fields)
+  def get(self):
+    # Get the query parameter from the request
+    project_id = request.args.get('project_id')
+
+    # Query the iterations by project id
+    if project_id:
+      iterations = Iteration.query.filter_by(project_id=project_id).all()
+    else:
+      iterations = Iteration.query.all()
+
+    # Return the iterations data
+    return iterations, 200
+
+# Define the resource for a single iteration
+class SingleIterationResource(Resource):
+  # Define the method for updating an iteration
+  @marshal_with(iteration_fields)
+  def put(self, iteration_id):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Get the iteration from the database by id
+    iteration = Iteration.query.get_or_404(iteration_id)
+
+    # Update the iteration attributes
+    iteration.name = data['name']
+    iteration.description = data['description']
+    iteration.start_date = data['start_date']
+    iteration.end_date = data['end_date']
+    # Commit the changes to the database
+    db.session.commit()
+
+    # Return the iteration data
+    return iteration, 200
+
+# Add the resources and routes to the API
+api.add_resource(IterationResource, '/iterations')
+api.add_resource(SingleIterationResource, '/iterations/<int:iteration_id>')
+
+# Define the output fields for tags
+tag_fields = {
+  'id': fields.Integer,
+  'name': fields.String,
+  'tasks': fields.List(fields.Nested(task_fields))
+}
+
+# Define the resource for tags
+class TagResource(Resource):
+  # Define the method for creating a new tag
+  @marshal_with(tag_fields)
+  def post(self):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Create a new tag object
+    tag = Tag(
+      name=data['name']
+    )
+
+    # Add the tag to the database
+    db.session.add(tag)
+    db.session.commit()
+
+    # Return the tag data
+    return tag, 201
+
+  # Define the method for querying tags
+  @marshal_with(tag_fields)
+  def get(self):
+    # Get the query parameter from the request
+    name = request.args.get('name')
+
+    # Query the tags by name
+    if name:
+      tags = Tag.query.filter_by(name=name).all()
+    else:
+      tags = Tag.query.all()
+
+    # Return the tags data
+    return tags, 200
+
+# Define the resource for a single tag
+class SingleTagResource(Resource):
+  # Define the method for updating a tag
+  @marshal_with(tag_fields)
+  def put(self, tag_id):
+    # Get the JSON data from the request
+    data = request.get_json()
+
+    # Get the tag from the database by id
+    tag = Tag.query.get_or_404(tag_id)
+
+    # Update the tag attributes
+    tag.name = data['name']
+
+    # Commit the changes to the database
+    db.session.commit()
+
+    # Return the tag data
+    return tag, 200
+
+# Add the resources and routes to the API
+api.add_resource(TagResource, '/tags')
+api.add_resource(SingleTagResource, '/tags/<int:tag_id>')
