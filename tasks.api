@@ -1,0 +1,37 @@
+-- Create a new task
+POST /tasks
+Content-Type: application/json
+
+{
+  "title": "Write a blog post",
+  "description": "Write a blog post about SQL data modeling",
+  "due_date": "2023-02-28",
+  "user_id": 1,
+  "project_id": 1,
+  "iteration_id": 1,
+  "tag_ids": [1, 2]
+}
+
+-- Query tasks by user
+GET /tasks?user_id=1
+
+-- Query tasks by due date
+GET /tasks?due_date=2023-02-28
+
+-- Query tasks by completion status
+GET /tasks?completed=true
+
+-- Query tasks by tag name
+GET /tasks?tag_name=urgent
+
+-- Update a task
+PUT /tasks/1
+Content-Type: application/json
+
+{
+  "title": "Write a blog post",
+  "description": "Write a blog post about SQL data modeling",
+  "due_date": "2023-02-28",
+  "completed": true,
+  "completed_at": "2023-02-27 12:00:00"
+}
